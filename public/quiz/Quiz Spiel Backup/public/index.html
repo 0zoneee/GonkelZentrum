@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz Spiel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="container">
+    <h1 id="status-title">Quiz Spiel</h1>
+
+    <div id="screen-login">
+        <input type="text" id="username" placeholder="Nickname wählen..." maxlength="12">
+        <button onclick="join()">Beitreten</button>
+    </div>
+
+    <div id="screen-game" class="hidden">
+        <div id="area-lobby">
+            <p id="info-text" style="color: var(--text-muted)">Warten auf Mitspieler...</p>
+            <button id="start-btn" onclick="socket.emit('startGame')">Spiel starten</button>
+        </div>
+
+        <div id="area-voting" class="hidden">
+            <h3 style="margin-top:0">Wer wird Gamemaster?</h3>
+            <div id="vote-list"></div>
+        </div>
+
+        <div id="area-active" class="hidden">
+            <div id="master-display"></div>
+            
+            <div id="wait-timer" class="hidden">
+                <p style="color: var(--text-muted)">Nächste Runde beginnt in</p>
+                <div id="seconds" style="font-size: 2.5rem; font-weight: 800; color: var(--primary);">10</div>
+            </div>
+
+            <div id="master-controls" class="hidden">
+                <p>Du bist an der Reihe!</p>
+                <input type="text" id="question-input" placeholder="Stelle eine knifflige Frage...">
+                <button onclick="submitQuestion()">Frage an alle senden</button>
+            </div>
+
+            <div id="question-display" class="hidden">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <span style="color: var(--text-muted); font-size: 0.8rem;">AKTUELLE FRAGE</span>
+                    <span id="timer-text">30s</span>
+                </div>
+                <p id="current-question-text" style="font-weight: 700; font-size: 1.1rem; margin: 0 0 20px 0;"></p>
+                <div id="player-answer-input" class="hidden">
+                    <input type="text" id="answer-input" placeholder="Deine Antwort...">
+                    <button onclick="sendAnswer()">Abschicken</button>
+                </div>
+            </div>
+
+            <div id="results-display" class="hidden">
+                <h3 style="text-align: left">Antworten</h3>
+                <div id="answers-list"></div>
+                <button id="next-round-btn" class="hidden" onclick="resetUI()" style="margin-top: 10px; background: var(--accent);">Nächste Runde</button>
+            </div>
+        </div>
+
+        <table>
+            <thead><tr><th>Spieler</th><th>Rolle</th><th>Punkte</th></tr></thead>
+            <tbody id="player-table"></tbody>
+        </table>
+    </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    const socket = io();
+    let isMaster = false;
+    let timer;
+
+    function join() {
+        const n = document.getElementById('username').value;
+        if(n) {
+            socket.emit('joinGame', n);
+            document.getElementById('screen-login').classList.add('hidden');
+            document.getElementById('screen-game').classList.remove('hidden');
+        }
+    }
+
+    function castVote(id) {
+        socket.emit('castVote', id);
+        document.getElementById('vote-list').innerHTML = "<p style='color: var(--text-muted)'>Stimme registriert...</p>";
+    }
+
+    function submitQuestion() {
+        const q = document.getElementById('question-input').value;
+        if(q) {
+            socket.emit('sendQuestion', q);
+            document.getElementById('question-input').value = "";
+        }
+    }
+
+    function sendAnswer() {
+        const a = document.getElementById('answer-input').value;
+        if(a.trim() !== "") {
+            socket.emit('submitAnswer', a);
+            document.getElementById('player-answer-input').classList.add('hidden');
+            document.getElementById('answer-input').value = "";
+        }
+    }
+
+    function resetUI() {
+        document.getElementById('results-display').classList.add('hidden');
+        if(isMaster) document.getElementById('master-controls').classList.remove('hidden');
+    }
+
+    function updateTable(ps) {
+        const table = document.getElementById('player-table');
+        table.innerHTML = "";
+        Object.values(ps).sort((a,b) => (b.score || 0) - (a.score || 0)).forEach(p => {
+            const scoreDisplay = p.role === 'Gamemaster' ? '—' : (p.score || 0);
+            const roleColor = p.role === 'Gamemaster' ? 'var(--accent)' : 'var(--text-muted)';
+            table.innerHTML += `<tr>
+                <td style="font-weight:700">${p.name}</td>
+                <td style="color: ${roleColor}; font-size: 0.8rem">${p.role}</td>
+                <td style="font-weight:700; color: var(--primary)">${scoreDisplay}</td>
+            </tr>`;
+        });
+    }
+
+    socket.on('updatePlayerList', (ps) => {
+        updateTable(ps);
+        document.getElementById('info-text').innerText = `${Object.keys(ps).length} Spieler bereit`;
+    });
+
+    socket.on('startVoting', (ps) => {
+        document.getElementById('status-title').innerText = "VOTING";
+        document.getElementById('area-lobby').classList.add('hidden');
+        document.getElementById('area-voting').classList.remove('hidden');
+        const list = document.getElementById('vote-list');
+        list.innerHTML = "";
+        Object.values(ps).forEach(p => {
+            list.innerHTML += `<button class="vote-btn" onclick="castVote('${p.id}')">${p.name}</button>`;
+        });
+    });
+
+    socket.on('masterElected', (data) => {
+        isMaster = (socket.id === data.masterId);
+        document.getElementById('status-title').innerText = "MATCH";
+        document.getElementById('area-voting').classList.add('hidden');
+        document.getElementById('area-active').classList.remove('hidden');
+        document.getElementById('master-display').innerHTML = isMaster ? "👑 Du bist der Gamemaster" : "👑 Master: " + data.masterName;
+        document.getElementById('wait-timer').classList.remove('hidden');
+        
+        updateTable(data.players);
+
+        let sec = 10;
+        let itv = setInterval(() => {
+            sec--;
+            document.getElementById('seconds').innerText = sec;
+            if(sec <= 0) {
+                clearInterval(itv);
+                document.getElementById('wait-timer').classList.add('hidden');
+                if(isMaster) document.getElementById('master-controls').classList.remove('hidden');
+            }
+        }, 1000);
+    });
+
+    socket.on('newQuestion', (data) => {
+        document.getElementById('master-controls').classList.add('hidden');
+        document.getElementById('results-display').classList.add('hidden');
+        document.getElementById('question-display').classList.remove('hidden');
+        document.getElementById('current-question-text').innerText = data.questionText;
+        if(!isMaster) document.getElementById('player-answer-input').classList.remove('hidden');
+        
+        let t = 30;
+        clearInterval(timer);
+        timer = setInterval(() => {
+            t--;
+            document.getElementById('timer-text').innerText = t + "s";
+            if(t <= 0) {
+                clearInterval(timer);
+                if(isMaster) socket.emit('timerFinished');
+            }
+        }, 1000);
+    });
+
+    socket.on('allAnswersIn', (ans) => {
+        clearInterval(timer);
+        document.getElementById('question-display').classList.add('hidden');
+        document.getElementById('results-display').classList.remove('hidden');
+        const list = document.getElementById('answers-list');
+        list.innerHTML = "";
+        
+        for(let id in ans) {
+            let div = document.createElement('div');
+            div.className = "answer-item";
+            div.innerHTML = `<div style="color: var(--primary); font-size: 0.8rem; margin-bottom: 5px;">${ans[id].name}</div>
+                             <div style="font-weight: 700;">${ans[id].text}</div>`;
+            if(isMaster) {
+                div.innerHTML += `<div style="margin-top:15px; display:flex; gap:8px;">
+                    <button class="score-btn plus" onclick="socket.emit('adjustScore',{targetId:'${id}',amount:1})">+1</button>
+                    <button class="score-btn plus" onclick="socket.emit('adjustScore',{targetId:'${id}',amount:0.5})">+0.5</button>
+                    <button class="score-btn minus" onclick="socket.emit('adjustScore',{targetId:'${id}',amount:-1})">-1</button>
+                </div>`;
+            }
+            list.appendChild(div);
+        }
+        if(isMaster) document.getElementById('next-round-btn').classList.remove('hidden');
+    });
+
+    socket.on('error', (e) => alert(e));
+</script>
+</body>
+</html>

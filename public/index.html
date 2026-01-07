@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gonkel Zenrum | Launcher</title>
+    <link rel="stylesheet" href="launcher.css">
+</head>
+<body>
+
+<div class="launcher-container">
+    <h1>Gonkel Zentrum</h1>
+    
+    <div class="game-grid">
+        <div class="game-card" onclick="window.location.href='/quiz/index.html'">
+            <span class="badge">Aktiv</span>
+            <span class="icon">👑</span>
+            <h3>Gonkel Quiz</h3>
+            <p style="color:var(--text-dim); line-height:1.6;">Überzeuge den Master mit deinen Antworten! Sammle die meisten Punkte und dominiere die Rangliste.</p>
+            <div class="btn">Jetzt spielen</div>
+        </div>
+
+        <div class="game-card" onclick="window.location.href='/imposter/index.html'">
+            <span class="badge" style="background: #10b981;">Aktiv</span>
+            <span class="icon">🕵️‍♂️</span>
+            <h3>Finde den Gonkler</h3>
+            <p style="color:var(--text-dim); line-height:1.6;">Ein Verräter unter euch! Beschreibe das Wort, entlarve den Gonkler oder täusche alle als Agent.</p>
+            <div class="btn">Jetzt spielen</div>
+        </div>
+
+        <div class="game-card locked">
+            <span class="icon">🚀</span>
+            <h3>Coming Soon</h3>
+            <p style="color:var(--text-dim); line-height:1.6;">Wir arbeiten an weiteren spannenden Spielen für dieses Center.</p>
+            <div class="btn" style="background:#334155;">Gesperrt</div>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

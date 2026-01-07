@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gonkel Quiz</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="container">
+    <h1 id="status-title">Gonkel Quiz</h1>
+    
+    <div id="screen-login">
+        <input type="text" id="username" placeholder="Nickname wählen..." maxlength="12">
+        <button onclick="join()">Beitreten</button>
+    </div>
+
+    <div id="screen-game" class="hidden">
+        <div id="area-lobby" class="hidden">
+            <p id="info-text">Warten auf Spieler...</p>
+            <button id="start-btn" onclick="socket.emit('startGame')" class="hidden">Spiel starten</button>
+        </div>
+
+        <div id="area-voting" class="hidden"></div>
+
+        <div id="area-active" class="hidden">
+            <div id="master-display" style="color:var(--accent); font-weight:800; font-size:0.8rem; text-transform:uppercase; margin-bottom:15px;"></div>
+            
+            <div id="timer-box" class="hidden">
+                <p id="timer-label" style="font-size:0.8rem; color:var(--primary); text-transform:uppercase; margin:0;"></p>
+                <div id="seconds" style="font-size:3.5rem; font-weight:800; margin:5px 0;">30</div>
+            </div>
+
+            <div id="master-controls" class="hidden">
+                <input type="text" id="question-input" placeholder="Deine Frage...">
+                <button onclick="submitQuestion()">Frage senden</button>
+            </div>
+
+            <div id="question-display" class="hidden">
+                <p id="current-question-text" style="font-weight:700; font-size:1.1rem; padding:20px; background:rgba(255,255,255,0.02); border-radius:16px; border:1px solid var(--border);"></p>
+                <div id="player-answer-input" class="hidden">
+                    <input type="text" id="answer-input" placeholder="Deine Antwort...">
+                    <button onclick="sendAnswer()">Abschicken</button>
+                </div>
+            </div>
+
+            <div id="results-display" class="hidden">
+                <div id="answers-list"></div>
+                <button id="next-round-btn" class="hidden" onclick="resetUI()">Nächste Frage</button>
+            </div>
+        </div>
+
+        <table>
+            <tbody id="player-table"></tbody>
+        </table>
+    </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    const socket = io();
+    let isMaster = false;
+    let timerInterval = null;
+    let mySessionId = localStorage.getItem('quizSessionId') || 'sess_' + Math.random().toString(36).substr(2, 9);
+    localStorage.setItem('quizSessionId', mySessionId);
+
+    socket.emit('restoreSession', mySessionId);
+
+    function join() {
+        const n = document.getElementById('username').value;
+        if(n.trim() !== "") socket.emit('joinGame', { username: n, sessionId: mySessionId });
+    }
+
+    function runTimer(seconds, onComplete, label) {
+        clearInterval(timerInterval);
+        const box = document.getElementById('timer-box');
+        const display = document.getElementById('seconds');
+        document.getElementById('timer-label').innerText = label;
+        box.classList.remove('hidden');
+        let timeLeft = seconds;
+        display.innerText = timeLeft;
+        timerInterval = setInterval(() => {
+            timeLeft--;
+            display.innerText = timeLeft;
+            if(timeLeft <= 0) {
+                clearInterval(timerInterval);
+                box.classList.add('hidden');
+                if(onComplete) onComplete();
+            }
+        }, 1000);
+    }
+
+    socket.on('joinSuccess', () => {
+        document.getElementById('screen-login').classList.add('hidden');
+        document.getElementById('screen-game').classList.remove('hidden');
+        document.getElementById('area-lobby').classList.remove('hidden');
+    });
+
+    socket.on('sessionRestored', (data) => {
+        document.getElementById('screen-login').classList.add('hidden');
+        document.getElementById('screen-game').classList.remove('hidden');
+        isMaster = (data.role === 'Gamemaster');
+        if (data.gameStatus === "lobby") document.getElementById('area-lobby').classList.remove('hidden');
+        if (data.gameStatus === "ingame") {
+            document.getElementById('area-active').classList.remove('hidden');
+            document.getElementById('master-display').innerText = isMaster ? "👑 DU BIST MASTER" : "👑 MASTER: " + (data.allSessions[data.masterId]?.name || "Online");
+            if (data.currentQuestion) {
+                document.getElementById('question-display').classList.remove('hidden');
+                document.getElementById('current-question-text').innerText = data.currentQuestion;
+                const onlinePlayers = Object.values(data.allSessions).filter(p=>p.role==='Spieler'&&p.isOnline).length;
+                if (Object.keys(data.answers).length === onlinePlayers && onlinePlayers > 0) showResults(data.answers);
+                else if (!isMaster && !data.answers[mySessionId]) document.getElementById('player-answer-input').classList.remove('hidden');
+            } else if (isMaster) {
+                document.getElementById('master-controls').classList.remove('hidden');
+            }
+        }
+        updateTable(data.allSessions);
+    });
+
+    socket.on('masterElected', (data) => {
+        isMaster = (mySessionId === data.masterId);
+        document.getElementById('area-voting').classList.add('hidden');
+        document.getElementById('area-active').classList.remove('hidden');
+        document.getElementById('master-display').innerText = isMaster ? "👑 DU BIST MASTER" : "👑 MASTER: " + data.masterName;
+        runTimer(10, () => { if(isMaster) document.getElementById('master-controls').classList.remove('hidden'); }, "Match startet in...");
+        updateTable(data.players);
+    });
+
+    socket.on('newQuestion', (data) => {
+        document.getElementById('master-controls').classList.add('hidden');
+        document.getElementById('results-display').classList.add('hidden');
+        document.getElementById('question-display').classList.remove('hidden');
+        document.getElementById('current-question-text').innerText = data.questionText;
+        if(!isMaster) {
+            document.getElementById('player-answer-input').classList.remove('hidden');
+            document.getElementById('answer-input').value = "";
+        }
+        runTimer(30, () => {
+            if(!isMaster) document.getElementById('player-answer-input').classList.add('hidden');
+            if(isMaster) socket.emit('timeUp');
+        }, "Zeit läuft:");
+    });
+
+    function showResults(ans) {
+        clearInterval(timerInterval); // Stoppt Countdown bei Ankunft aller Antworten
+        document.getElementById('timer-box').classList.add('hidden');
+        document.getElementById('question-display').classList.add('hidden');
+        document.getElementById('results-display').classList.remove('hidden');
+        const list = document.getElementById('answers-list');
+        list.innerHTML = "<h3>Antworten:</h3>";
+        for(let id in ans) {
+            let div = document.createElement('div');
+            div.className = "answer-item";
+            div.innerHTML = `
+                <div><span style="color:var(--primary); font-size:0.75rem; font-weight:600;">${ans[id].name}</span><br>${ans[id].text}</div>
+                ${isMaster ? `
+                    <div class="score-group">
+                        <button class="score-btn minus" onclick="socket.emit('adjustScore',{targetId:'${id}',amount:-1})">-1</button>
+                        <button class="score-btn plus" onclick="socket.emit('adjustScore',{targetId:'${id}',amount:0.5})">0.5</button>
+                        <button class="score-btn plus" onclick="socket.emit('adjustScore',{targetId:'${id}',amount:1})">+1</button>
+                    </div>` : ''}`;
+            list.appendChild(div);
+        }
+        if(isMaster) document.getElementById('next-round-btn').classList.remove('hidden');
+    }
+
+    socket.on('allAnswersIn', (ans) => showResults(ans));
+
+    function updateTable(ps) {
+        const table = document.getElementById('player-table');
+        table.innerHTML = "";
+        const players = Object.values(ps);
+        players.sort((a,b)=>(b.score||0)-(a.score||0)).forEach(p => {
+            const statusColor = p.isOnline ? 'var(--success)' : 'var(--danger)';
+            const scoreDisp = p.role === 'Gamemaster' ? 'MASTER' : (p.score || 0);
+            table.innerHTML += `<tr><td>${p.name} <span style="color:${statusColor}">●</span></td><td>${scoreDisp}</td></tr>`;
+        });
+        const onlineCount = players.filter(p => p.isOnline).length;
+        if(onlineCount >= 3) document.getElementById('start-btn').classList.remove('hidden');
+        else document.getElementById('start-btn').classList.add('hidden');
+    }
+
+    socket.on('startVoting', (ps) => {
+        document.getElementById('area-lobby').classList.add('hidden');
+        const v = document.getElementById('area-voting');
+        v.classList.remove('hidden');
+        v.innerHTML = "<h3>Wählt den Master</h3><div id='vote-list'></div>";
+        Object.values(ps).forEach(p => {
+            if(p.isOnline) {
+                let b = document.createElement('button'); b.className='vote-btn'; b.innerText=p.name;
+                b.onclick=()=>{socket.emit('castVote',p.id);v.innerHTML="<p>Stimme abgegeben...</p>";};
+                v.querySelector('#vote-list').appendChild(b);
+            }
+        });
+    });
+
+    socket.on('updatePlayerList', (ps) => updateTable(ps));
+    function submitQuestion() { const q = document.getElementById('question-input').value; if(q) socket.emit('sendQuestion', q); }
+    function sendAnswer() { const a = document.getElementById('answer-input').value; socket.emit('submitAnswer', a); document.getElementById('player-answer-input').classList.add('hidden'); }
+    function resetUI() { document.getElementById('results-display').classList.add('hidden'); if(isMaster) document.getElementById('master-controls').classList.remove('hidden'); }
+</script>
+</body>
+</html>

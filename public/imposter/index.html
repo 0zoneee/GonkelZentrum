@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finde den Gonkler</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="container">
+    <h1 id="status-title">Finde den Gonkler</h1>
+    
+    <div id="screen-login">
+        <input type="text" id="username" placeholder="Dein Name..." maxlength="12">
+        <button onclick="join()">Beitreten</button>
+    </div>
+
+    <div id="screen-game" class="hidden">
+        
+        <div id="game-info">
+            <div id="role-badge" class="badge">Lobby</div>
+            <div id="header-center-info" class="header-mid"></div>
+            <div id="round-info">0/5</div>
+        </div>
+
+        <div id="timer-box" class="hidden">
+            <p id="timer-label">Zeit</p>
+            <div id="seconds">30</div>
+        </div>
+
+        <div id="area-lobby" class="hidden">
+            <p id="lobby-text">Warten auf Spieler...</p>
+            <button id="start-btn" class="hidden" onclick="socket.emit('startGame')">Spiel starten</button>
+        </div>
+
+        <div id="area-selecting" class="hidden">
+            <p id="selector-info">Wortwahl...</p>
+            <div id="word-options" class="hidden">
+                <h3 style="color:var(--primary); margin-bottom:15px;">Wähle ein Wort:</h3>
+                <div id="options-list"></div>
+            </div>
+        </div>
+
+        <div id="area-countdown" class="hidden">
+            <p>Spiel startet in Kürze...</p>
+            <div id="countdown-word-display" class="word-card">...</div>
+        </div>
+
+        <div id="area-ingame" class="hidden">
+            <div id="word-display" class="word-card">???</div>
+            <div style="height: 20px;"></div> 
+            <button id="next-btn" class="hidden" onclick="socket.emit('nextTurn')">Weitergeben</button>
+            <button id="vote-req-btn" onclick="socket.emit('requestVote')">Abstimmung vorschlagen</button>
+            <p id="vote-status-text" style="font-size: 0.8rem; margin-top: 10px; color: var(--text-dim);"></p>
+        </div>
+
+        <div id="area-voting" class="hidden">
+            <h3>Wer ist der Gonkler?</h3>
+            <p style="font-size:0.8rem; color:var(--text-dim);">Klicke auf 'Vote' neben dem Namen!</p>
+        </div>
+
+        <div id="area-results" class="hidden">
+            <h2 id="result-text" style="font-size: 1.8rem;"></h2>
+            <p id="imposter-reveal" style="color: var(--text-dim); margin-bottom: 20px;"></p>
+            <p id="kicked-reveal" style="color: var(--danger);"></p>
+            <button onclick="socket.emit('playAgain')">Neues Spiel</button>
+        </div>
+
+        <table id="player-list-table">
+            <tbody id="player-table"></tbody>
+        </table>
+    </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    const socket = io();
+    let myId = localStorage.getItem('imposterSessionId') || 'imp_' + Math.random().toString(36).substr(2, 9);
+    localStorage.setItem('imposterSessionId', myId);
+    
+    let currentGameStatus = "lobby";
+    let hasVoted = false;
+
+    socket.emit('restoreSession', myId);
+
+    function join() {
+        const n = document.getElementById('username').value;
+        if(n.trim() !== "") socket.emit('joinGame', { username: n, sessionId: myId });
+    }
+
+    function hideAllAreas() {
+        ['area-lobby', 'area-selecting', 'area-countdown', 'area-ingame', 'area-voting', 'area-results'].forEach(id => {
+            const el = document.getElementById(id);
+            if(el) el.classList.add('hidden');
+        });
+    }
+
+    // --- EVENTS ---
+
+    socket.on('sessionRestored', (data) => {
+        document.getElementById('screen-login').classList.add('hidden');
+        document.getElementById('screen-game').classList.remove('hidden');
+        
+        currentGameStatus = data.gameStatus;
+        
+        const badge = document.getElementById('role-badge');
+        if(data.role && data.role !== 'spectator') {
+            badge.innerText = data.role.toUpperCase();
+            badge.className = "badge " + data.role;
+        }
+
+        hideAllAreas();
+        if(data.gameStatus === "lobby") {
+            document.getElementById('area-lobby').classList.remove('hidden');
+        } else if(data.gameStatus === "ingame") {
+            document.getElementById('area-ingame').classList.remove('hidden');
+            updateGameDisplay(data);
+        } else if(data.gameStatus === "voting") {
+            document.getElementById('area-voting').classList.remove('hidden');
+        }
+    });
+
+    socket.on('joinSuccess', () => {
+        document.getElementById('screen-login').classList.add('hidden');
+        document.getElementById('screen-game').classList.remove('hidden');
+        document.getElementById('area-lobby').classList.remove('hidden');
+    });
+
+    socket.on('updatePlayerList', (ps) => {
+        const table = document.getElementById('player-table');
+        table.innerHTML = "";
+        const playersArr = Object.values(ps);
+        
+        playersArr.forEach(p => {
+            let row = `<tr><td>${p.name} <span class="${p.isOnline ? 'status-true' : 'status-false'}">●</span></td>`;
+            
+            // Logik für Vote-Buttons
+            if (currentGameStatus === "voting" && p.id !== myId && p.isOnline) {
+                if (hasVoted) {
+                    row += `<td style="text-align:right; font-size:0.8rem; color:var(--text-dim);"><em>Erledigt</em></td>`;
+                } else {
+                    row += `<td style="text-align:right">
+                                <button class="btn-vote" onclick="doVote('${p.id}')">Vote</button>
+                            </td>`;
+                }
+            } else {
+                row += `<td></td>`;
+            }
+            
+            row += `</tr>`;
+            table.innerHTML += row;
+        });
+        
+        const onlineCount = playersArr.filter(p => p.isOnline).length;
+        if(onlineCount >= 3) {
+            document.getElementById('start-btn')?.classList.remove('hidden');
+            document.getElementById('lobby-text').innerText = "Bereit zum Start!";
+        } else {
+            document.getElementById('start-btn')?.classList.add('hidden');
+            document.getElementById('lobby-text').innerText = "Warten auf Spieler (mind. 3)...";
+        }
+    });
+
+    // Diese Funktion wird vom Button aufgerufen
+    function doVote(targetId) {
+        socket.emit('castVote', targetId);
+        hasVoted = true; 
+        socket.emit('requestPlayerUpdate'); 
+    }
+
+    socket.on('gameStarting', (data) => {
+        hideAllAreas();
+        currentGameStatus = data.status;
+        document.getElementById('timer-label').innerText = "Zeit übrig";
+        
+        document.getElementById('area-selecting').classList.remove('hidden');
+        
+        const opt = document.getElementById('word-options');
+        if(myId === data.selectorId) {
+            opt.classList.remove('hidden');
+            document.getElementById('selector-info').innerText = "Du darfst das Wort wählen!";
+        } else {
+            opt.classList.add('hidden');
+            document.getElementById('selector-info').innerText = "Ein Spieler wählt gerade das Wort...";
+        }
+    });
+
+    socket.on('chooseWord', (words) => {
+        const list = document.getElementById('options-list');
+        list.innerHTML = "";
+        words.forEach(w => {
+            const btn = document.createElement('button');
+            btn.innerText = w;
+            btn.style.marginBottom = "10px";
+            btn.onclick = () => socket.emit('wordChosen', w);
+            list.appendChild(btn);
+        });
+    });
+
+    socket.on('roleAssigned', (data) => {
+        hideAllAreas();
+        currentGameStatus = data.status;
+        document.getElementById('area-countdown').classList.remove('hidden');
+        
+        const badge = document.getElementById('role-badge');
+        badge.innerText = data.role.toUpperCase();
+        badge.className = "badge " + data.role;
+        
+        document.getElementById('countdown-word-display').innerText = data.word;
+    });
+
+    socket.on('revealWord', (word) => {
+        const display = document.getElementById('word-display');
+        if (display) {
+            display.innerText = word;
+            display.style.borderColor = (word === "???") ? "var(--danger)" : "var(--primary)";
+            display.style.color = "var(--text)";
+        }
+    });
+
+    socket.on('gameStarted', (data) => {
+        hideAllAreas();
+        currentGameStatus = data.status;
+        
+        // NEU: Alten Voting-Text löschen
+        document.getElementById('vote-status-text').innerText = "";
+        
+        document.getElementById('area-ingame').classList.remove('hidden');
+        updateGameDisplay(data);
+    });
+
+    socket.on('turnUpdate', (data) => {
+        updateGameDisplay(data);
+    });
+
+    socket.on('voteRequested', (data) => {
+        document.getElementById('vote-status-text').innerText = `Abstimmung vorgeschlagen: ${data.count} / ${data.required}`;
+    });
+
+    socket.on('timerUpdate', (time) => {
+        document.getElementById('timer-box').classList.remove('hidden');
+        document.getElementById('seconds').innerText = time;
+    });
+
+    function updateGameDisplay(data) {
+        const centerInfo = document.getElementById('header-center-info');
+        if(data.activeName) {
+            centerInfo.innerText = data.activeName;
+            centerInfo.classList.add('active-speaker-glow');
+        }
+
+        if(data.turnOrder) {
+            const activeId = data.turnOrder[data.currentTurnIndex];
+            const nextBtn = document.getElementById('next-btn');
+            
+            if (activeId === myId) {
+                nextBtn.classList.remove('hidden');
+            } else {
+                nextBtn.classList.add('hidden');
+            }
+        }
+
+        if(data.roundCount) {
+            document.getElementById('round-info').innerText = data.roundCount + "/5";
+        }
+    }
+
+    socket.on('votingStarted', (data) => {
+        hideAllAreas();
+        currentGameStatus = data.status;
+        hasVoted = false; // Reset bei neuem Voting
+        
+        document.getElementById('area-voting').classList.remove('hidden');
+        document.getElementById('timer-label').innerText = data.forced ? "FINALES VOTING" : "ABSTIMMUNG";
+        
+        socket.emit('requestPlayerUpdate'); 
+    });
+
+    socket.on('gameOver', (data) => {
+        hideAllAreas();
+        currentGameStatus = data.status;
+        document.getElementById('area-results').classList.remove('hidden');
+        document.getElementById('result-text').innerText = data.winner === 'innocents' ? "INNOCENTS GEWINNEN!" : "GONKLER GEWINNT!";
+        document.getElementById('imposter-reveal').innerText = "Der Gonkler war: " + data.imposterId;
+        
+        if(data.kickedName) {
+            document.getElementById('kicked-reveal').innerText = "Rausgeworfen wurde: " + data.kickedName;
+        }
+    });
+
+    socket.on('votingCancelled', () => {
+        hideAllAreas();
+        currentGameStatus = "ingame";
+        hasVoted = false; 
+        document.getElementById('area-ingame').classList.remove('hidden');
+        document.getElementById('vote-status-text').innerText = "Abstimmung abgebrochen (keine Mehrheit).";
+    });
+
+    socket.on('backToLobby', (updatedSessions) => {
+        currentGameStatus = "lobby";
+        hasVoted = false;
+        
+        hideAllAreas();
+        document.getElementById('area-lobby').classList.remove('hidden');
+        document.getElementById('timer-box').classList.add('hidden');
+        document.getElementById('timer-label').innerText = "Zeit übrig";
+        
+        // NEU: Alten Voting-Text löschen
+        document.getElementById('vote-status-text').innerText = "";
+        
+        const badge = document.getElementById('role-badge');
+        badge.innerText = "Lobby";
+        badge.className = "badge"; 
+        
+        document.getElementById('round-info').innerText = "0/5";
+        document.getElementById('word-display').innerText = "???";
+        document.getElementById('countdown-word-display').innerText = "...";
+        document.getElementById('header-center-info').innerText = "";
+        document.getElementById('status-title').innerText = "Finde den Gonkler";
+    });
+
+</script>
+</body>
+</html>
