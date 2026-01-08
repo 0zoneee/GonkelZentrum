@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gonkel Buzzer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div id="screen-login" class="container">
+        <h1 style="font-size: 1.8rem;">Gonkel Buzzer</h1>
+        <input type="text" id="username" placeholder="Dein Name..." maxlength="12" autocomplete="off">
+        <button class="btn-primary" onclick="joinGame()">Beitreten</button>
+    </div>
+
+    <div id="screen-game" class="container hidden">
+        <h1 id="status-title">DRÜCKEN!</h1>
+        
+        <div id="buzzer-btn" onclick="pressBuzzer()">
+            BUZZER
+        </div>
+
+        <div id="status-text">Warte auf Frage...</div>
+        
+        <button id="reset-btn" onclick="resetBuzzer()">Runde zurücksetzen</button>
+    </div>
+
+    <script>
+        // Einfacher Beep-Generator via AudioContext, damit man keine MP3 braucht
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playBeep() {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.type = 'square';
+            oscillator.frequency.value = 440; // Hz
+            gainNode.gain.value = 0.1;
+            oscillator.start();
+            setTimeout(() => oscillator.stop(), 300); // 0.3 Sekunden lang
+        }
+    </script>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let myName = "";
+
+        function joinGame() {
+            const input = document.getElementById('username');
+            if(input.value.trim() !== "") {
+                myName = input.value;
+                socket.emit('buzzer:join', myName);
+            }
+        }
+
+        socket.on('buzzer:joined', () => {
+            document.getElementById('screen-login').classList.add('hidden');
+            document.getElementById('screen-game').classList.remove('hidden');
+        });
+
+        // Wenn man selbst drückt
+        function pressBuzzer() {
+            socket.emit('buzzer:press');
+        }
+
+        // Reset Knopf drücken (kann jeder machen)
+        function resetBuzzer() {
+            socket.emit('buzzer:reset');
+        }
+
+        // --- EVENTS VOM SERVER ---
+
+        // Jemand hat gewonnen!
+        socket.on('buzzer:activated', (winnerName) => {
+            const btn = document.getElementById('buzzer-btn');
+            const status = document.getElementById('status-text');
+            const title = document.getElementById('status-title');
+
+            if (winnerName === myName) {
+                // ICH habe gewonnen
+                btn.classList.add('winner');
+                btn.innerText = "DU!";
+                status.innerText = "Du darfst antworten!";
+                title.innerText = "GEWONNEN!";
+                document.body.style.backgroundImage = "radial-gradient(at 50% 50%, rgba(34, 197, 94, 0.2) 0, transparent 60%)";
+            } else {
+                // JEMAND ANDERES hat gewonnen -> Sperren
+                btn.classList.add('locked-out');
+                btn.innerText = winnerName;
+                status.innerText = winnerName + " ist dran!";
+                title.innerText = "ZU LANGSAM";
+                document.body.style.backgroundImage = "radial-gradient(at 50% 50%, rgba(100, 116, 139, 0.2) 0, transparent 60%)";
+            }
+        });
+
+        // Neue Runde / Reset
+        socket.on('buzzer:reset', () => {
+            const btn = document.getElementById('buzzer-btn');
+            const status = document.getElementById('status-text');
+            const title = document.getElementById('status-title');
+
+            // UI zurücksetzen
+            btn.className = ""; // Alle Klassen weg (winner, locked-out)
+            btn.innerText = "BUZZER";
+            status.innerText = "Warte auf Frage...";
+            title.innerText = "DRÜCKEN!";
+            document.body.style.backgroundImage = "radial-gradient(at 50% 50%, rgba(244, 63, 94, 0.1) 0, transparent 60%)";
+        });
+
+        // Sound abspielen
+        socket.on('buzzer:playSound', () => {
+            playBeep();
+        });
+
+    </script>
+</body>
+</html>
