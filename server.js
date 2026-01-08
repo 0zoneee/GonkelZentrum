@@ -6,7 +6,7 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 // Statische Dateien aus dem "public" Ordner bereitstellen
-// Das erlaubt Zugriff auf /index.html (Launcher), /quiz/ und /imposter/
+// Das erlaubt Zugriff auf /index.html (Launcher), /quiz/, /imposter/ und /buzzer/
 app.use(express.static(__dirname + '/public'));
 
 // --- QUIZ-LOGIK AKTIVIEREN ---
@@ -25,6 +25,15 @@ try {
     console.log('✅ Imposter-Modul erfolgreich geladen.');
 } catch (err) {
     console.error('❌ Fehler beim Laden des Imposter-Moduls:', err.message);
+}
+
+// --- BUZZER-LOGIK AKTIVIEREN (NEU) ---
+try {
+    const setupBuzzer = require('./buzzer-logic.js');
+    setupBuzzer(io);
+    console.log('✅ Buzzer-Modul erfolgreich geladen.');
+} catch (err) {
+    console.error('❌ Fehler beim Laden des Buzzer-Moduls (Datei fehlt evtl.):', err.message);
 }
 
 // Launcher Port-Konfiguration
